@@ -111,6 +111,23 @@ export interface Student {
   created_at: string;
 }
 
+/**
+ * Nota de voz del docente (DESIGN_SYSTEM.md §8.7).
+ *
+ * PROTOTIPO: el audio se graba en el navegador con MediaRecorder y vive como `blob:` en
+ * memoria durante la sesión. NO se sube a Storage todavía — cuando exista el bucket,
+ * `object_url` pasa a ser la ruta firmada de Supabase y el resto de campos no cambia.
+ */
+export interface VoiceNote {
+  id: string;
+  duration_seconds: number;
+  created_at: string;
+  /** blob: en el prototipo; URL firmada de Storage cuando exista el backend. */
+  object_url?: string;
+  /** Amplitudes 0–1 para dibujar la onda simplificada de §8.7 de forma estable. */
+  waveform: number[];
+}
+
 export interface Submission {
   id: string;
   activity_id: string;
@@ -121,6 +138,14 @@ export interface Submission {
   status: ProcessingStatus;
   created_at: string;
   processed_at: string | null;
+  /**
+   * Retroalimentación de cierre para toda la entrega, escrita por el docente.
+   * Es distinta del `teacher_feedback` por respuesta de `GradingResult` (§22): esta es el
+   * mensaje global al estudiante, no el comentario de una pregunta.
+   */
+  teacher_feedback: string | null;
+  /** Mensaje de voz que acompaña (o reemplaza) al texto. */
+  voice_note: VoiceNote | null;
 }
 
 export interface Answer {

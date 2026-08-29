@@ -273,6 +273,13 @@ export function seedDatabase(): Database {
       status: status === "PENDING" ? "PENDING" : "READY",
       created_at: iso(5),
       processed_at: status === "PENDING" ? null : iso(4),
+      // Retroalimentación de cierre: solo algunas entregas ya finalizadas la tienen,
+      // para que se vea el estado "todavía sin retroalimentación" en el prototipo.
+      teacher_feedback:
+        status === "FINAL" && index % 3 === 0
+          ? "Buen trabajo. Se nota que entendiste la idea principal; en la próxima evaluación desarrolla un poco más el procedimiento paso a paso."
+          : null,
+      voice_note: null,
     };
     submissions.push(sub);
     if (status === "PENDING") return;

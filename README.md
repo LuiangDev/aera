@@ -37,7 +37,7 @@ restaurar los datos de ejemplo o vaciarlos (útil para ver los estados vacíos d
 | `/actividades/[id]/documento` | Subir/escanear + progreso por pasos (§11, §8.10) |
 | `/actividades/[id]/preguntas` | Editor de preguntas y criterios (§15, §16), confianza baja resaltada |
 | `/actividades/[id]/respuestas` | Carga en lote + asignación archivo→estudiante (§11, §17) |
-| `/actividades/[id]/correccion/[submissionId]` | Revisión de la corrección IA (§18, §8.9) |
+| `/actividades/[id]/correccion/[submissionId]` | Revisión de la corrección IA (§18, §8.9) y **retroalimentación de cierre** con texto y voz (§8.7) |
 | `/actividades/[id]/resultados` | Notas, promedio, estado (§21) |
 | `/actividades/[id]/resultados/[studentId]` | Resultado individual imprimible / PDF (§8.2) |
 | `/estudiantes` | Lista de clase, alta individual y en lote |
@@ -68,15 +68,18 @@ Ningún componente decide de dónde vienen los datos: todo pasa por `useData()`.
 
 1. Crear el proyecto en Supabase y aplicar
    `supabase/migrations/0001_init.sql` y `0002_storage.sql`.
-2. Correr `supabase/tests/rls.sql` y confirmar que el docente B ve **cero** filas de A.
-3. Copiar `.env.local.example` a `.env.local` y completar las variables.
-4. Reemplazar la implementación de cada función de `lib/data/provider.tsx` por su
+2. Aplicar también `0003_submission_feedback.sql` (retroalimentación de cierre y bucket `feedback-audio`).
+3. Correr `supabase/tests/rls.sql` y confirmar que el docente B ve **cero** filas de A.
+4. Copiar `.env.local.example` a `.env.local` y completar las variables.
+5. Reemplazar la implementación de cada función de `lib/data/provider.tsx` por su
    consulta de Supabase. Las firmas y los tipos de retorno no cambian, así que las
    pantallas no se tocan.
-5. Sustituir `startActivityProcessing` / `startSubmissionProcessing` por una llamada a la
+6. Sustituir `startActivityProcessing` / `startSubmissionProcessing` por una llamada a la
    Edge Function que encola el trabajo, y `jobFor` por una suscripción de Supabase
    Realtime al `status` de `activities` / `submissions` (§26).
-6. Construir el pipeline OCR + IA **después** de correr la validación técnica de §5
+7. Subir el audio de `voice_note` al bucket `feedback-audio` desde `saveVoiceNote` y
+   guardar la URL firmada en vez del `blob:` en memoria.
+8. Construir el pipeline OCR + IA **después** de correr la validación técnica de §5
    (3–5 documentos reales, al menos uno manuscrito) y borrar `lib/data/mock-ai.ts`.
 
 ## Decisiones de diseño que no se negocian
@@ -86,3 +89,12 @@ Ningún componente decide de dónde vienen los datos: todo pasa por `useData()`.
 - El estado de la actividad es derivado (§22), nunca un campo editable.
 - Toda pantalla de carga usa el progreso por pasos de §8.10.
 - Toda lista que puede estar vacía tiene su estado vacío (§8.11).
+- La retroalimentación del docente (texto y voz) NO lleva el badge de §8.9: ese patrón es
+  solo para lo que propuso la IA y todavía no se confirmó.
+
+## Nota de alcance: feedback por voz
+
+`DESIGN_SYSTEM.md` §8.7 especificaba el reproductor de voz pero lo marcaba fuera del MVP,
+y `PROJECT_CONTEXT.md` §33 lo listaba como fuera de alcance "hasta que se confirme". El
+brief lo confirmó, así que está construido con esa especificación. Conviene actualizar §33
+para que los documentos dejen de contradecir el producto.

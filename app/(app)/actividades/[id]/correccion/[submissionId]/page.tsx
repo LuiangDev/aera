@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import { AiSuggestedValue, ConfirmedValue } from "@/components/ui/ai-value";
 import { GradingCard } from "@/components/grading/grading-card";
+import { FeedbackComposer } from "@/components/grading/feedback-composer";
 import { SUBMISSION_PIPELINE_STEPS } from "@/lib/data/mock-ai";
 import { useData } from "@/lib/data/provider";
 
@@ -159,6 +160,11 @@ export default function CorreccionPage() {
             {items.map((item) => (
               <GradingCard key={item.question.id} item={item} />
             ))}
+          </div>
+
+          {/* Cierre del flujo: la retroalimentación del docente para el estudiante (§8.7) */}
+          <div className="mt-gutter">
+            <FeedbackComposer submission={submission} />
           </div>
         </>
       )}

@@ -20,6 +20,7 @@ import type {
   Student,
   Submission,
   Teacher,
+  VoiceNote,
 } from "@/lib/types";
 import { CONFIDENCE_THRESHOLD } from "@/lib/types";
 import {
@@ -150,6 +151,10 @@ interface DataContextValue {
   assignSubmissionStudent: (submissionId: string, studentId: string) => Promise<void>;
   deleteSubmission: (id: string) => Promise<void>;
   gradingItemsOf: (submissionId: string) => GradingItem[];
+  /* retroalimentación de cierre (§8.7) */
+  saveSubmissionFeedback: (submissionId: string, feedback: string) => Promise<void>;
+  saveVoiceNote: (submissionId: string, note: VoiceNote) => Promise<void>;
+  deleteVoiceNote: (submissionId: string) => Promise<void>;
   /* corrección */
   setTeacherScore: (gradingId: string, score: number) => Promise<void>;
   setTeacherFeedback: (gradingId: string, feedback: string) => Promise<void>;
@@ -737,6 +742,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         status: "PENDING",
         created_at: now(),
         processed_at: null,
+        teacher_feedback: null,
+        voice_note: null,
       }));
       setDb((prev) => ({ ...prev, submissions: [...prev.submissions, ...created] }));
       return created;
@@ -791,6 +798,50 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         });
     },
     [db.submissions, db.questions, db.answers, db.grading_results],
+  );
+
+  /* ── retroalimentación de cierre (§8.7) ─────────────────────────────────── */
+
+  const patchSubmission = (
+    prev: Database,
+    submissionId: string,
+    patch: Partial<Submission>,
+  ): Database => ({
+    ...prev,
+    submissions: prev.submissions.map((s) =>
+      s.id === submissionId ? { ...s, ...patch } : s,
+    ),
+  });
+
+  const saveSubmissionFeedback = useCallback<
+    DataContextValue["saveSubmissionFeedback"]
+  >(async (submissionId, feedback) => {
+    await sleep(250);
+    setDb((prev) =>
+      patchSubmission(prev, submissionId, {
+        teacher_feedback: feedback.trim() ? feedback : null,
+      }),
+    );
+  }, []);
+
+  const saveVoiceNote = useCallback<DataContextValue["saveVoiceNote"]>(
+    async (submissionId, note) => {
+      setDb((prev) => patchSubmission(prev, submissionId, { voice_note: note }));
+    },
+    [],
+  );
+
+  const deleteVoiceNote = useCallback<DataContextValue["deleteVoiceNote"]>(
+    async (submissionId) => {
+      setDb((prev) => {
+        const current = prev.submissions.find((s) => s.id === submissionId);
+        if (current?.voice_note?.object_url?.startsWith("blob:")) {
+          URL.revokeObjectURL(current.voice_note.object_url);
+        }
+        return patchSubmission(prev, submissionId, { voice_note: null });
+      });
+    },
+    [],
   );
 
   /* ── corrección (§18, §19) ──────────────────────────────────────────────── */
@@ -980,6 +1031,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     assignSubmissionStudent,
     deleteSubmission,
     gradingItemsOf,
+    saveSubmissionFeedback,
+    saveVoiceNote,
+    deleteVoiceNote,
     setTeacherScore,
     setTeacherFeedback,
     approveGrading,

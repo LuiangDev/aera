@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { EmptyState } from "@/components/ui/empty-state";
 import { AiSuggestedBadge } from "@/components/ui/ai-value";
+import { VoicePlayer, formatSeconds } from "@/components/ui/voice-player";
 import { useData } from "@/lib/data/provider";
 
 /**
@@ -143,6 +144,32 @@ export default function ResultadoEstudiantePage() {
               );
             })}
           </div>
+
+          {/* §8.7 — la retroalimentación de cierre viaja con el resultado que se entrega */}
+          {(submission.teacher_feedback || submission.voice_note) && (
+            <section className="rounded-lg border border-surface-border bg-surface-container-low p-4">
+              <h2 className="mb-2 font-sans text-headline-sm text-on-background">
+                Retroalimentación de tu docente
+              </h2>
+              {submission.teacher_feedback && (
+                <p className="font-sans text-body-md text-on-background">
+                  {submission.teacher_feedback}
+                </p>
+              )}
+              {submission.voice_note && (
+                <>
+                  <p className="mt-3 flex items-center gap-2 font-sans text-body-sm text-on-surface-variant">
+                    <Icon name="mic" size={20} className="text-[18px]" />
+                    Incluye un mensaje de voz de{" "}
+                    {formatSeconds(submission.voice_note.duration_seconds)}.
+                  </p>
+                  <div className="no-print mt-2">
+                    <VoicePlayer note={submission.voice_note} />
+                  </div>
+                </>
+              )}
+            </section>
+          )}
 
           <footer className="border-t border-surface-border pt-4 font-sans text-label-sm text-on-surface-variant">
             Calificación revisada y confirmada por el docente. Generado con AERA.
