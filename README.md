@@ -41,6 +41,8 @@ restaurar los datos de ejemplo o vaciarlos (útil para ver los estados vacíos d
 | `/actividades/[id]/resultados` | Notas, promedio, estado (§21) |
 | `/actividades/[id]/resultados/[studentId]` | Resultado individual imprimible / PDF (§8.2) |
 | `/estudiantes` | Lista de clase, alta individual y en lote |
+| `/familia` | Ingreso del apoderado con el código del estudiante (prototipo, sin auth) |
+| `/familia/[studentId]` | Avance del estudiante para su familia: por curso, evaluaciones y mensajes del docente |
 | `/ajustes` | Cuenta y control de los datos de demostración |
 
 ## Arquitectura del front
@@ -77,9 +79,12 @@ Ningún componente decide de dónde vienen los datos: todo pasa por `useData()`.
 6. Sustituir `startActivityProcessing` / `startSubmissionProcessing` por una llamada a la
    Edge Function que encola el trabajo, y `jobFor` por una suscripción de Supabase
    Realtime al `status` de `activities` / `submissions` (§26).
-7. Subir el audio de `voice_note` al bucket `feedback-audio` desde `saveVoiceNote` y
+7. Aplicar `0004_feedback_send_and_guardian.sql` (envío de retroalimentación y apoderado).
+   **Antes de conectar el portal familiar hay que decidir su modelo de acceso**: la
+   migración explica las dos opciones y por qué hoy no tiene policies de lectura.
+8. Subir el audio de `voice_note` al bucket `feedback-audio` desde `saveVoiceNote` y
    guardar la URL firmada en vez del `blob:` en memoria.
-8. Construir el pipeline OCR + IA **después** de correr la validación técnica de §5
+9. Construir el pipeline OCR + IA **después** de correr la validación técnica de §5
    (3–5 documentos reales, al menos uno manuscrito) y borrar `lib/data/mock-ai.ts`.
 
 ## Decisiones de diseño que no se negocian
@@ -92,7 +97,16 @@ Ningún componente decide de dónde vienen los datos: todo pasa por `useData()`.
 - La retroalimentación del docente (texto y voz) NO lleva el badge de §8.9: ese patrón es
   solo para lo que propuso la IA y todavía no se confirmó.
 
-## Nota de alcance: feedback por voz
+## Notas de alcance
+
+### Portal familiar
+
+`PROJECT_CONTEXT.md` §33 deja el portal con login propio fuera del MVP (fase 3). El
+portal del apoderado se construyó a pedido del brief como **prototipo**: sin
+autenticación, con acceso por código de estudiante y leyendo de la capa mock. La familia
+solo ve notas que el docente confirmó y retroalimentación que ya envió.
+
+### Feedback por voz
 
 `DESIGN_SYSTEM.md` §8.7 especificaba el reproductor de voz pero lo marcaba fuera del MVP,
 y `PROJECT_CONTEXT.md` §33 lo listaba como fuera de alcance "hasta que se confirme". El

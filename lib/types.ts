@@ -109,6 +109,12 @@ export interface Student {
   name: string;
   identifier: string;
   created_at: string;
+  /**
+   * Apoderado. En esta fase el estudiante NO tiene usuario propio: quien entra al portal
+   * de seguimiento es su apoderado (PROJECT_CONTEXT.md §33 deja el portal de estudiante
+   * fuera del MVP; esta variante familiar queda marcada como prototipo).
+   */
+  guardian_name?: string;
 }
 
 /**
@@ -126,6 +132,11 @@ export interface VoiceNote {
   object_url?: string;
   /** Amplitudes 0–1 para dibujar la onda simplificada de §8.7 de forma estable. */
   waveform: number[];
+  /**
+   * Reinterpretación escrita del audio, generada por IA. Es una SUGERENCIA: se muestra
+   * con el patrón de §8.9 y el docente decide si la usa, la edita o la descarta.
+   */
+  ai_transcript?: string;
 }
 
 export interface Submission {
@@ -146,6 +157,17 @@ export interface Submission {
   teacher_feedback: string | null;
   /** Mensaje de voz que acompaña (o reemplaza) al texto. */
   voice_note: VoiceNote | null;
+  /**
+   * Retroalimentación global SUGERIDA por la IA a partir de toda la corrección
+   * (respuestas + criterios + puntajes). Nunca se entrega tal cual: el docente la
+   * aprueba o la edita, y hasta entonces se muestra con el patrón de §8.9.
+   */
+  ai_feedback_draft: string | null;
+  /**
+   * Momento en que el docente ENVIÓ la retroalimentación a la familia.
+   * Mientras sea null, nada de esto es visible en el portal del apoderado.
+   */
+  feedback_sent_at: string | null;
 }
 
 export interface Answer {

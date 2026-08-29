@@ -158,6 +158,73 @@ export function gradeSubmission(
   return { answers, grading };
 }
 
+/**
+ * Retroalimentación global sugerida por IA a partir de toda la corrección.
+ * Se arma con datos reales de la entrega (puntaje, criterios cumplidos y no cumplidos),
+ * no con texto genérico: es lo que haría el modelo con el mismo insumo.
+ *
+ * SIEMPRE es una sugerencia (§19, §31): el docente la aprueba o la edita antes de enviar.
+ */
+export function buildFeedbackDraft(input: {
+  studentName: string;
+  total: number;
+  maxTotal: number;
+  strengths: string[];
+  gaps: string[];
+  /** false cuando la nota todavía no está confirmada: el borrador no menciona el puntaje. */
+  includeScore: boolean;
+}): string {
+  const nombre = input.studentName.split(" ")[0] || "Hola";
+  const ratio = input.maxTotal ? input.total / input.maxTotal : 0;
+
+  // Si la nota todavía no está confirmada, el borrador NO menciona el puntaje: de lo
+  // contrario un número provisional llegaría a la familia dentro del texto (§19, §31).
+  const puntaje = input.includeScore ? ` (${input.total} de ${input.maxTotal})` : "";
+
+  const apertura =
+    ratio >= 0.85
+      ? `${nombre}, tu trabajo está muy bien resuelto${puntaje}.`
+      : ratio >= 0.6
+        ? `${nombre}, tu trabajo va por buen camino${puntaje}.`
+        : `${nombre}, hay varias cosas por reforzar en este trabajo${puntaje}.`;
+
+  const fuerte = input.strengths.length
+    ? ` Lo que resolviste con claridad: ${input.strengths.slice(0, 2).join("; ")}.`
+    : "";
+
+  const brecha = input.gaps.length
+    ? ` Conviene que trabajes: ${input.gaps.slice(0, 2).join("; ")}.`
+    : " Mantén ese nivel en la próxima evaluación.";
+
+  const cierre =
+    ratio >= 0.6
+      ? " Sigue explicando tu procedimiento paso a paso: eso hace visible lo que ya entiendes."
+      : " Repasemos juntos estos puntos en la próxima clase.";
+
+  return `${apertura}${fuerte}${brecha}${cierre}`;
+}
+
+/**
+ * Reinterpretación escrita de un mensaje de voz.
+ *
+ * PROTOTIPO: no hay transcripción real — no se envía audio a ningún proveedor todavía.
+ * Devuelve un texto de ejemplo con la forma que tendría la salida real para que el flujo
+ * se pueda evaluar. La interfaz lo declara como simulado; no presentarlo como
+ * transcripción fiel de lo que el docente dijo.
+ */
+export function transcribeVoiceNote(input: {
+  studentName: string;
+  durationSeconds: number;
+}): string {
+  const nombre = input.studentName.split(" ")[0] || "el estudiante";
+  return (
+    `Mensaje de voz de ${input.durationSeconds} segundos para ${nombre}. ` +
+    "En resumen: se reconoce el esfuerzo en el desarrollo, se pide detallar el " +
+    "procedimiento antes del resultado y se propone repasar los ejercicios similares " +
+    "de la clase anterior."
+  );
+}
+
 /** Pasos que muestra el componente de progreso de §8.10 al procesar una actividad. */
 export const ACTIVITY_PIPELINE_STEPS = [
   "Archivo recibido",

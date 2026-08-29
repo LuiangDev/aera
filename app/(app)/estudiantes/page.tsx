@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Fab, PageHeader } from "@/components/layout/app-shell";
@@ -143,7 +144,20 @@ export default function EstudiantesPage() {
                         </TD>
                         <TD className="text-on-surface-variant">{s.identifier}</TD>
                         <TD>
-                          <div className="flex justify-end">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              asChild
+                              variant="icon"
+                              size="icon"
+                              title={`Ver lo que ve la familia de ${s.name}`}
+                            >
+                              <Link
+                                href={`/familia/${s.id}`}
+                                aria-label={`Ver el seguimiento familiar de ${s.name}`}
+                              >
+                                <Icon name="family_restroom" size={20} />
+                              </Link>
+                            </Button>
                             <Button
                               variant="icon"
                               size="icon"

@@ -101,6 +101,13 @@ export default function LoginPage() {
         </Link>
       </p>
 
+      <p className="mt-4 text-center font-sans text-body-sm text-on-surface-variant">
+        ¿Eres apoderado?{" "}
+        <Link href="/familia" className="text-primary-container hover:underline">
+          Entra al seguimiento de tu hijo o hija
+        </Link>
+      </p>
+
       <p className="mt-4 rounded-lg border border-surface-border bg-surface-container-low p-3 text-center font-sans text-label-sm text-on-surface-variant">
         Maqueta de front: cualquier correo y contraseña te dejan entrar con los datos de
         demostración.

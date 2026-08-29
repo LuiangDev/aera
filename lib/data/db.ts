@@ -24,7 +24,9 @@ export interface Database {
   session: { teacher_id: string | null };
 }
 
-export const STORAGE_KEY = "aera.mock.db.v1";
+// v2: el modelo ganó retroalimentación enviada, propuesta de IA y apoderado. Subir la
+// versión evita que una sesión antigua del navegador quede con registros sin esos campos.
+export const STORAGE_KEY = "aera.mock.db.v2";
 
 export const uid = (prefix: string) =>
   `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -41,6 +43,11 @@ const NOMBRES = [
   "Jorge Alcántara", "Rosa Villar", "Sebastián Caro", "Nadia Espinoza", "Óscar Tapia",
 ];
 
+const APODERADOS = [
+  "Rosa Navarro", "Julio Mendoza", "Carmen Díaz", "Héctor Ramírez", "Silvia Torres",
+  "Manuel Salas", "Patricia Ríos", "Alberto Vega", "Lucía Rojas", "Óscar Aguirre",
+];
+
 function makeStudents(teacherId: string, count: number, offset = 0): Student[] {
   return Array.from({ length: count }, (_, i) => {
     const name = NOMBRES[(i + offset) % NOMBRES.length];
@@ -50,6 +57,7 @@ function makeStudents(teacherId: string, count: number, offset = 0): Student[] {
       name,
       identifier: `A-${String(offset + i + 1).padStart(3, "0")}`,
       created_at: iso(40),
+      guardian_name: APODERADOS[(i + offset) % APODERADOS.length],
     };
   });
 }
@@ -280,6 +288,10 @@ export function seedDatabase(): Database {
           ? "Buen trabajo. Se nota que entendiste la idea principal; en la próxima evaluación desarrolla un poco más el procedimiento paso a paso."
           : null,
       voice_note: null,
+      ai_feedback_draft: null,
+      // Algunas ya enviadas a la familia, para que el portal del apoderado tenga contenido.
+      feedback_sent_at:
+        status === "FINAL" && index % 3 === 0 ? iso(2) : null,
     };
     submissions.push(sub);
     if (status === "PENDING") return;

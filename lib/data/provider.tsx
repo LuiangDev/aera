@@ -34,8 +34,10 @@ import { deriveActivityStatus } from "@/lib/data/derive";
 import {
   ACTIVITY_PIPELINE_STEPS,
   SUBMISSION_PIPELINE_STEPS,
+  buildFeedbackDraft,
   extractQuestions,
   gradeSubmission,
+  transcribeVoiceNote,
 } from "@/lib/data/mock-ai";
 
 /**
@@ -93,6 +95,44 @@ export interface ResultRow {
   aiTotal: number;
   maxTotal: number;
   status: AnswerStatus | "SIN_ENTREGA";
+}
+
+/** Una evaluación tal como la ve la familia: solo notas ya confirmadas por el docente. */
+export interface StudentEvaluation {
+  activityId: string;
+  submissionId: string;
+  title: string;
+  subject: string;
+  date: string;
+  /** null mientras el docente no confirme la nota: la familia nunca ve un puntaje provisional. */
+  score: number | null;
+  maxScore: number;
+  percent: number | null;
+  /** false = el docente todavía está corrigiendo esta evaluación. */
+  scoreConfirmed: boolean;
+  feedbackSentAt: string | null;
+  teacherFeedback: string | null;
+  voiceNote: VoiceNote | null;
+}
+
+export interface SubjectProgress {
+  subject: string;
+  average: number;
+  maxScore: number;
+  percent: number;
+  evaluations: number;
+  /** Lectura simple para el apoderado, con texto además del color. */
+  level: "sólido" | "en proceso" | "a reforzar";
+}
+
+export interface StudentProgress {
+  student: Student;
+  evaluations: StudentEvaluation[];
+  bySubject: SubjectProgress[];
+  overallPercent: number | null;
+  /** Comparación entre la primera mitad y la segunda mitad de sus evaluaciones. */
+  trend: "sube" | "baja" | "estable" | null;
+  pendingCount: number;
 }
 
 interface DataContextValue {
@@ -155,6 +195,15 @@ interface DataContextValue {
   saveSubmissionFeedback: (submissionId: string, feedback: string) => Promise<void>;
   saveVoiceNote: (submissionId: string, note: VoiceNote) => Promise<void>;
   deleteVoiceNote: (submissionId: string) => Promise<void>;
+  /** Genera la retroalimentación SUGERIDA por IA a partir de toda la corrección. */
+  generateAiFeedbackDraft: (submissionId: string) => Promise<string>;
+  /** Reinterpretación escrita del mensaje de voz (simulada en el prototipo). */
+  generateVoiceTranscript: (submissionId: string) => Promise<string>;
+  /** Envía la retroalimentación a la familia: recién ahí es visible en el portal. */
+  sendFeedback: (submissionId: string) => Promise<void>;
+  /* portal del apoderado */
+  findStudentByCode: (code: string) => Student | null;
+  studentProgress: (studentId: string) => StudentProgress | null;
   /* corrección */
   setTeacherScore: (gradingId: string, score: number) => Promise<void>;
   setTeacherFeedback: (gradingId: string, feedback: string) => Promise<void>;
@@ -744,6 +793,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         processed_at: null,
         teacher_feedback: null,
         voice_note: null,
+        ai_feedback_draft: null,
+        feedback_sent_at: null,
       }));
       setDb((prev) => ({ ...prev, submissions: [...prev.submissions, ...created] }));
       return created;
@@ -842,6 +893,206 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       });
     },
     [],
+  );
+
+  const generateAiFeedbackDraft = useCallback<
+    DataContextValue["generateAiFeedbackDraft"]
+  >(
+    async (submissionId) => {
+      await sleep(900); // la llamada real al modelo tarda; la UI muestra su estado de carga
+      const submission = db.submissions.find((s) => s.id === submissionId);
+      const student = db.students.find((st) => st.id === submission?.student_id);
+      const items = gradingItemsOf(submissionId);
+
+      const strengths: string[] = [];
+      const gaps: string[] = [];
+      let total = 0;
+      let maxTotal = 0;
+
+      items.forEach(({ question, grading }) => {
+        maxTotal += question.points;
+        if (!grading) return;
+        total += grading.teacher_score ?? grading.ai_score;
+        question.rubric.forEach((criterion) => {
+          const cs = grading.criterion_scores.find(
+            (c) => c.criterion_id === criterion.id,
+          );
+          if (!cs || !criterion.description) return;
+          const points = cs.teacher_points ?? cs.ai_points;
+          const target = points >= criterion.points ? strengths : gaps;
+          target.push(criterion.description.toLowerCase());
+        });
+      });
+
+      const draft = buildFeedbackDraft({
+        studentName: student?.name ?? "Estudiante",
+        total: Math.round(total * 10) / 10,
+        maxTotal,
+        strengths,
+        gaps,
+        includeScore: items.every((i) => i.grading?.status === "FINAL"),
+      });
+
+      setDb((prev) => patchSubmission(prev, submissionId, { ai_feedback_draft: draft }));
+      return draft;
+    },
+    [db.submissions, db.students, gradingItemsOf],
+  );
+
+  const generateVoiceTranscript = useCallback<
+    DataContextValue["generateVoiceTranscript"]
+  >(
+    async (submissionId) => {
+      await sleep(900);
+      const submission = db.submissions.find((s) => s.id === submissionId);
+      const student = db.students.find((st) => st.id === submission?.student_id);
+      if (!submission?.voice_note) return "";
+      const transcript = transcribeVoiceNote({
+        studentName: student?.name ?? "el estudiante",
+        durationSeconds: submission.voice_note.duration_seconds,
+      });
+      setDb((prev) =>
+        patchSubmission(prev, submissionId, {
+          voice_note: { ...submission.voice_note!, ai_transcript: transcript },
+        }),
+      );
+      return transcript;
+    },
+    [db.submissions, db.students],
+  );
+
+  const sendFeedback = useCallback<DataContextValue["sendFeedback"]>(
+    async (submissionId) => {
+      await sleep(500);
+      setDb((prev) =>
+        patchSubmission(prev, submissionId, { feedback_sent_at: now() }),
+      );
+    },
+    [],
+  );
+
+  /* ── portal del apoderado ───────────────────────────────────────────────── */
+
+  const findStudentByCode = useCallback<DataContextValue["findStudentByCode"]>(
+    (code) => {
+      const needle = code.trim().toLowerCase();
+      if (!needle) return null;
+      return (
+        db.students.find(
+          (s) =>
+            s.identifier.toLowerCase() === needle ||
+            s.name.toLowerCase() === needle,
+        ) ?? null
+      );
+    },
+    [db.students],
+  );
+
+  const studentProgress = useCallback<DataContextValue["studentProgress"]>(
+    (studentId) => {
+      const student = db.students.find((s) => s.id === studentId);
+      if (!student) return null;
+
+      const subs = db.submissions.filter((s) => s.student_id === studentId);
+      const evaluations: StudentEvaluation[] = [];
+      let pendingCount = 0;
+
+      subs.forEach((submission) => {
+        const activity = db.activities.find((a) => a.id === submission.activity_id);
+        if (!activity) return;
+        const questions = db.questions.filter((q) => q.activity_id === activity.id);
+        const maxScore = questions.reduce((acc, q) => acc + q.points, 0);
+        const answers = db.answers.filter((a) => a.submission_id === submission.id);
+        const ansIds = new Set(answers.map((a) => a.id));
+        const grades = db.grading_results.filter((g) => ansIds.has(g.answer_id));
+
+        // REGLA DE CONFIANZA (§19, §31): la familia solo ve notas ya confirmadas por el
+        // docente. Nada sugerido por IA sin confirmar sale de la vista del docente.
+        const allFinal = grades.length > 0 && grades.every((g) => g.status === "FINAL");
+        if (!allFinal) pendingCount += 1;
+
+        // Si el docente ya envió su mensaje, la evaluación aparece igual — pero sin nota,
+        // que es lo que el propio diálogo de envío le promete al docente.
+        if (!allFinal && !submission.feedback_sent_at) return;
+
+        const score = allFinal
+          ? grades.reduce((acc, g) => acc + (g.teacher_score ?? 0), 0)
+          : null;
+        evaluations.push({
+          activityId: activity.id,
+          submissionId: submission.id,
+          title: activity.title,
+          subject: activity.subject,
+          date: submission.processed_at ?? submission.created_at,
+          score: score === null ? null : Math.round(score * 10) / 10,
+          maxScore,
+          percent:
+            score === null || !maxScore ? null : Math.round((score / maxScore) * 100),
+          scoreConfirmed: allFinal,
+          feedbackSentAt: submission.feedback_sent_at,
+          // Solo lo ENVIADO llega a la familia.
+          teacherFeedback: submission.feedback_sent_at
+            ? submission.teacher_feedback
+            : null,
+          voiceNote: submission.feedback_sent_at ? submission.voice_note : null,
+        });
+      });
+
+      evaluations.sort((a, b) => a.date.localeCompare(b.date));
+
+      // Promedios y tendencia se calculan SOLO con notas confirmadas.
+      const scored = evaluations.filter(
+        (e): e is StudentEvaluation & { score: number; percent: number } =>
+          e.scoreConfirmed && e.score !== null && e.percent !== null,
+      );
+
+      const subjects = new Map<string, typeof scored>();
+      scored.forEach((e) => {
+        subjects.set(e.subject, [...(subjects.get(e.subject) ?? []), e]);
+      });
+
+      const bySubject: SubjectProgress[] = Array.from(subjects.entries()).map(
+        ([subject, list]) => {
+          const percent = Math.round(
+            list.reduce((acc, e) => acc + e.percent, 0) / list.length,
+          );
+          return {
+            subject,
+            average:
+              Math.round(
+                (list.reduce((acc, e) => acc + e.score, 0) / list.length) * 10,
+              ) / 10,
+            maxScore: list[0]?.maxScore ?? 20,
+            percent,
+            evaluations: list.length,
+            level: percent >= 80 ? "sólido" : percent >= 60 ? "en proceso" : "a reforzar",
+          };
+        },
+      );
+
+      const overallPercent = scored.length
+        ? Math.round(scored.reduce((acc, e) => acc + e.percent, 0) / scored.length)
+        : null;
+
+      let trend: StudentProgress["trend"] = null;
+      if (scored.length >= 2) {
+        const half = Math.floor(scored.length / 2);
+        const avg = (list: typeof scored) =>
+          list.reduce((acc, e) => acc + e.percent, 0) / list.length;
+        const diff = avg(scored.slice(half)) - avg(scored.slice(0, half));
+        trend = diff > 5 ? "sube" : diff < -5 ? "baja" : "estable";
+      }
+
+      return { student, evaluations, bySubject, overallPercent, trend, pendingCount };
+    },
+    [
+      db.students,
+      db.submissions,
+      db.activities,
+      db.questions,
+      db.answers,
+      db.grading_results,
+    ],
   );
 
   /* ── corrección (§18, §19) ──────────────────────────────────────────────── */
@@ -1034,6 +1285,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     saveSubmissionFeedback,
     saveVoiceNote,
     deleteVoiceNote,
+    generateAiFeedbackDraft,
+    generateVoiceTranscript,
+    sendFeedback,
+    findStudentByCode,
+    studentProgress,
     setTeacherScore,
     setTeacherFeedback,
     approveGrading,
