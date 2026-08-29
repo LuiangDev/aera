@@ -23,6 +23,8 @@ import type {
   VoiceNote,
 } from "@/lib/types";
 import { CONFIDENCE_THRESHOLD } from "@/lib/types";
+import type { AchievementLevel, EducationLevel } from "@/lib/evaluacion";
+import { compareLevels, predominantLevel } from "@/lib/evaluacion";
 import {
   type Database,
   STORAGE_KEY,
@@ -76,8 +78,10 @@ export interface ActivityWithStats extends Activity {
 export interface SubmissionWithMeta extends Submission {
   student: Student | null;
   answerStatuses: AnswerStatus[];
-  aiTotal: number;
-  finalTotal: number | null;
+  /** Nivel sugerido por la IA para la competencia, a partir de las evidencias. */
+  suggestedLevel: AchievementLevel | null;
+  /** El nivel que vale: el del docente si ya lo confirmó. */
+  effectiveLevel: AchievementLevel | null;
   isGraded: boolean;
   isFinal: boolean;
 }
@@ -91,25 +95,25 @@ export interface GradingItem {
 export interface ResultRow {
   student: Student;
   submission: Submission | null;
-  finalTotal: number | null;
-  aiTotal: number;
-  maxTotal: number;
+  /** Nivel confirmado por el docente; null si todavía no lo confirmó. */
+  finalLevel: AchievementLevel | null;
+  /** Nivel sugerido por la IA. */
+  suggestedLevel: AchievementLevel | null;
   status: AnswerStatus | "SIN_ENTREGA";
 }
 
-/** Una evaluación tal como la ve la familia: solo notas ya confirmadas por el docente. */
+/** Una evaluación tal como la ve la familia: solo niveles ya confirmados por el docente. */
 export interface StudentEvaluation {
   activityId: string;
   submissionId: string;
   title: string;
   subject: string;
+  competency: string;
   date: string;
-  /** null mientras el docente no confirme la nota: la familia nunca ve un puntaje provisional. */
-  score: number | null;
-  maxScore: number;
-  percent: number | null;
-  /** false = el docente todavía está corrigiendo esta evaluación. */
-  scoreConfirmed: boolean;
+  /** null mientras el docente no confirme: la familia nunca ve una valoración provisional. */
+  level: AchievementLevel | null;
+  /** false = el docente todavía está valorando esta evidencia. */
+  levelConfirmed: boolean;
   feedbackSentAt: string | null;
   teacherFeedback: string | null;
   voiceNote: VoiceNote | null;
@@ -117,19 +121,18 @@ export interface StudentEvaluation {
 
 export interface SubjectProgress {
   subject: string;
-  average: number;
-  maxScore: number;
-  percent: number;
+  /** Nivel predominante del área, calculado con la moda — nunca promediando (ver §evaluación). */
+  level: AchievementLevel;
+  competencies: string[];
   evaluations: number;
-  /** Lectura simple para el apoderado, con texto además del color. */
-  level: "sólido" | "en proceso" | "a reforzar";
 }
 
 export interface StudentProgress {
   student: Student;
   evaluations: StudentEvaluation[];
   bySubject: SubjectProgress[];
-  overallPercent: number | null;
+  /** Nivel predominante en todas las áreas con evaluaciones confirmadas. */
+  overallLevel: AchievementLevel | null;
   /** Comparación entre la primera mitad y la segunda mitad de sus evaluaciones. */
   trend: "sube" | "baja" | "estable" | null;
   pendingCount: number;
@@ -149,8 +152,9 @@ interface DataContextValue {
   createActivity: (input: {
     title: string;
     subject: string;
+    competency: string;
     description: string;
-    max_score: number;
+    education_level: EducationLevel;
     application_date?: string;
   }) => Promise<Activity>;
   updateActivity: (id: string, patch: Partial<Activity>) => Promise<void>;
@@ -205,14 +209,16 @@ interface DataContextValue {
   findStudentByCode: (code: string) => Student | null;
   studentProgress: (studentId: string) => StudentProgress | null;
   /* corrección */
-  setTeacherScore: (gradingId: string, score: number) => Promise<void>;
+  setTeacherLevel: (gradingId: string, level: AchievementLevel) => Promise<void>;
+  /** El docente puede fijar a mano el nivel de la competencia para toda la evidencia. */
+  setSubmissionLevel: (submissionId: string, level: AchievementLevel) => Promise<void>;
   setTeacherFeedback: (gradingId: string, feedback: string) => Promise<void>;
   approveGrading: (gradingId: string) => Promise<void>;
   approveAllGrading: (submissionId: string) => Promise<void>;
-  setCriterionTeacherPoints: (
+  setCriterionTeacherLevel: (
     gradingId: string,
     criterionId: string,
-    points: number,
+    level: AchievementLevel,
   ) => Promise<void>;
   /* resultados */
   resultsOf: (activityId: string) => ResultRow[];
@@ -286,6 +292,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       name,
       email,
       created_at: now(),
+      education_level: "primaria",
     };
     setDb((prev) => ({
       ...prev,
@@ -364,8 +371,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         teacher_id: db.session.teacher_id ?? db.teachers[0]?.id ?? "t_1",
         title: input.title,
         subject: input.subject,
+        competency: input.competency,
         description: input.description,
-        max_score: input.max_score,
+        education_level: input.education_level,
         application_date: input.application_date,
         created_at: now(),
         updated_at: now(),
@@ -569,7 +577,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         text: "",
         options: [],
         expected_answer: "",
-        points: 1,
         rubric: [],
         confidence: 1, // creada a mano por el docente: no es una extracción de IA
         confirmed: true,
@@ -648,7 +655,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
                 ...q,
                 rubric: [
                   ...q.rubric,
-                  { id: uid("c"), description: "", points: 1 },
+                  { id: uid("c"), description: "" },
                 ],
                 updated_at: now(),
               }
@@ -760,16 +767,21 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           const answers = db.answers.filter((a) => a.submission_id === s.id);
           const ansIds = new Set(answers.map((a) => a.id));
           const grades = db.grading_results.filter((g) => ansIds.has(g.answer_id));
-          const aiTotal = grades.reduce((acc, g) => acc + g.ai_score, 0);
-          const finalTotal = grades.length
-            ? grades.reduce((acc, g) => acc + (g.teacher_score ?? g.ai_score), 0)
-            : null;
+          // El nivel de la competencia se determina por el nivel predominante de las
+          // evidencias, nunca promediando (ver lib/evaluacion.ts).
+          const suggestedLevel =
+            s.ai_level ?? predominantLevel(grades.map((g) => g.ai_level));
+          const effectiveLevel =
+            s.teacher_level ??
+            predominantLevel(
+              grades.map((g) => g.teacher_level ?? g.ai_level),
+            );
           return {
             ...s,
             student: db.students.find((st) => st.id === s.student_id) ?? null,
             answerStatuses: grades.map((g) => g.status),
-            aiTotal,
-            finalTotal,
+            suggestedLevel,
+            effectiveLevel,
             isGraded: grades.length > 0,
             isFinal: grades.length > 0 && grades.every((g) => g.status === "FINAL"),
           };
@@ -795,6 +807,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         voice_note: null,
         ai_feedback_draft: null,
         feedback_sent_at: null,
+        ai_level: null,
+        teacher_level: null,
       }));
       setDb((prev) => ({ ...prev, submissions: [...prev.submissions, ...created] }));
       return created;
@@ -904,33 +918,36 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       const student = db.students.find((st) => st.id === submission?.student_id);
       const items = gradingItemsOf(submissionId);
 
+      const activity = db.activities.find((a) => a.id === submission?.activity_id);
       const strengths: string[] = [];
       const gaps: string[] = [];
-      let total = 0;
-      let maxTotal = 0;
+      const levels: AchievementLevel[] = [];
 
       items.forEach(({ question, grading }) => {
-        maxTotal += question.points;
         if (!grading) return;
-        total += grading.teacher_score ?? grading.ai_score;
+        levels.push(grading.teacher_level ?? grading.ai_level);
         question.rubric.forEach((criterion) => {
-          const cs = grading.criterion_scores.find(
+          const cl = grading.criterion_levels.find(
             (c) => c.criterion_id === criterion.id,
           );
-          if (!cs || !criterion.description) return;
-          const points = cs.teacher_points ?? cs.ai_points;
-          const target = points >= criterion.points ? strengths : gaps;
+          if (!cl || !criterion.description) return;
+          const level = cl.teacher_level ?? cl.ai_level;
+          // "Logra" lo que alcanzó el nivel esperado o superior; el resto es lo que
+          // todavía requiere acompañamiento.
+          const target = compareLevels(level, "A") >= 0 ? strengths : gaps;
           target.push(criterion.description.toLowerCase());
         });
       });
 
+      const levelConfirmed = items.every((i) => i.grading?.status === "FINAL");
       const draft = buildFeedbackDraft({
         studentName: student?.name ?? "Estudiante",
-        total: Math.round(total * 10) / 10,
-        maxTotal,
+        competency: activity?.competency ?? "la competencia trabajada",
+        level: submission?.teacher_level ?? predominantLevel(levels),
+        educationLevel: activity?.education_level ?? "primaria",
         strengths,
         gaps,
-        includeScore: items.every((i) => i.grading?.status === "FINAL"),
+        levelConfirmed,
       });
 
       setDb((prev) => patchSubmission(prev, submissionId, { ai_feedback_draft: draft }));
@@ -1000,8 +1017,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       subs.forEach((submission) => {
         const activity = db.activities.find((a) => a.id === submission.activity_id);
         if (!activity) return;
-        const questions = db.questions.filter((q) => q.activity_id === activity.id);
-        const maxScore = questions.reduce((acc, q) => acc + q.points, 0);
         const answers = db.answers.filter((a) => a.submission_id === submission.id);
         const ansIds = new Set(answers.map((a) => a.id));
         const grades = db.grading_results.filter((g) => ansIds.has(g.answer_id));
@@ -1015,20 +1030,19 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         // que es lo que el propio diálogo de envío le promete al docente.
         if (!allFinal && !submission.feedback_sent_at) return;
 
-        const score = allFinal
-          ? grades.reduce((acc, g) => acc + (g.teacher_score ?? 0), 0)
+        const level = allFinal
+          ? (submission.teacher_level ??
+            predominantLevel(grades.map((g) => g.teacher_level ?? g.ai_level)))
           : null;
         evaluations.push({
           activityId: activity.id,
           submissionId: submission.id,
           title: activity.title,
           subject: activity.subject,
+          competency: activity.competency,
           date: submission.processed_at ?? submission.created_at,
-          score: score === null ? null : Math.round(score * 10) / 10,
-          maxScore,
-          percent:
-            score === null || !maxScore ? null : Math.round((score / maxScore) * 100),
-          scoreConfirmed: allFinal,
+          level,
+          levelConfirmed: allFinal,
           feedbackSentAt: submission.feedback_sent_at,
           // Solo lo ENVIADO llega a la familia.
           teacherFeedback: submission.feedback_sent_at
@@ -1040,50 +1054,45 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
       evaluations.sort((a, b) => a.date.localeCompare(b.date));
 
-      // Promedios y tendencia se calculan SOLO con notas confirmadas.
-      const scored = evaluations.filter(
-        (e): e is StudentEvaluation & { score: number; percent: number } =>
-          e.scoreConfirmed && e.score !== null && e.percent !== null,
+      // El avance se lee SOLO con niveles ya confirmados por el docente.
+      const confirmed = evaluations.filter(
+        (e): e is StudentEvaluation & { level: AchievementLevel } =>
+          e.levelConfirmed && e.level !== null,
       );
 
-      const subjects = new Map<string, typeof scored>();
-      scored.forEach((e) => {
+      const subjects = new Map<string, typeof confirmed>();
+      confirmed.forEach((e) => {
         subjects.set(e.subject, [...(subjects.get(e.subject) ?? []), e]);
       });
 
       const bySubject: SubjectProgress[] = Array.from(subjects.entries()).map(
-        ([subject, list]) => {
-          const percent = Math.round(
-            list.reduce((acc, e) => acc + e.percent, 0) / list.length,
-          );
-          return {
-            subject,
-            average:
-              Math.round(
-                (list.reduce((acc, e) => acc + e.score, 0) / list.length) * 10,
-              ) / 10,
-            maxScore: list[0]?.maxScore ?? 20,
-            percent,
-            evaluations: list.length,
-            level: percent >= 80 ? "sólido" : percent >= 60 ? "en proceso" : "a reforzar",
-          };
-        },
+        ([subject, list]) => ({
+          subject,
+          // Moda de los niveles del área. No se promedian niveles de logro.
+          level: predominantLevel(list.map((e) => e.level)) ?? "C",
+          competencies: Array.from(new Set(list.map((e) => e.competency))),
+          evaluations: list.length,
+        }),
       );
 
-      const overallPercent = scored.length
-        ? Math.round(scored.reduce((acc, e) => acc + e.percent, 0) / scored.length)
-        : null;
+      const overallLevel = predominantLevel(confirmed.map((e) => e.level));
 
+      // Tendencia: se compara el nivel de la primera mitad con el de la segunda, usando
+      // el orden de la escala (C < B < A < AD), no un promedio numérico.
       let trend: StudentProgress["trend"] = null;
-      if (scored.length >= 2) {
-        const half = Math.floor(scored.length / 2);
-        const avg = (list: typeof scored) =>
-          list.reduce((acc, e) => acc + e.percent, 0) / list.length;
-        const diff = avg(scored.slice(half)) - avg(scored.slice(0, half));
-        trend = diff > 5 ? "sube" : diff < -5 ? "baja" : "estable";
+      if (confirmed.length >= 2) {
+        const half = Math.floor(confirmed.length / 2);
+        const modeOf = (list: typeof confirmed) =>
+          predominantLevel(list.map((e) => e.level));
+        const before = modeOf(confirmed.slice(0, half));
+        const after = modeOf(confirmed.slice(half));
+        if (before && after) {
+          const diff = compareLevels(after, before);
+          trend = diff > 0 ? "sube" : diff < 0 ? "baja" : "estable";
+        }
       }
 
-      return { student, evaluations, bySubject, overallPercent, trend, pendingCount };
+      return { student, evaluations, bySubject, overallLevel, trend, pendingCount };
     },
     [
       db.students,
@@ -1108,14 +1117,21 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     ),
   });
 
-  const setTeacherScore = useCallback<DataContextValue["setTeacherScore"]>(
-    async (gradingId, score) => {
+  const setTeacherLevel = useCallback<DataContextValue["setTeacherLevel"]>(
+    async (gradingId, level) => {
       setDb((prev) =>
         patchGrading(prev, gradingId, {
-          teacher_score: score,
+          teacher_level: level,
           status: "TEACHER_REVIEW",
         }),
       );
+    },
+    [],
+  );
+
+  const setSubmissionLevel = useCallback<DataContextValue["setSubmissionLevel"]>(
+    async (submissionId, level) => {
+      setDb((prev) => patchSubmission(prev, submissionId, { teacher_level: level }));
     },
     [],
   );
@@ -1138,7 +1154,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         const g = prev.grading_results.find((x) => x.id === gradingId);
         if (!g) return prev;
         return patchGrading(prev, gradingId, {
-          teacher_score: g.teacher_score ?? g.ai_score,
+          teacher_level: g.teacher_level ?? g.ai_level,
           status: "FINAL",
         });
       });
@@ -1153,17 +1169,30 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         const ansIds = new Set(
           prev.answers.filter((a) => a.submission_id === submissionId).map((a) => a.id),
         );
+        const grading_results = prev.grading_results.map((g) =>
+          ansIds.has(g.answer_id)
+            ? {
+                ...g,
+                teacher_level: g.teacher_level ?? g.ai_level,
+                status: "FINAL" as AnswerStatus,
+                updated_at: now(),
+              }
+            : g,
+        );
+        // Al confirmar todas las evidencias queda fijado el nivel de la competencia.
+        const levels = grading_results
+          .filter((g) => ansIds.has(g.answer_id))
+          .map((g) => g.teacher_level ?? g.ai_level);
         return {
           ...prev,
-          grading_results: prev.grading_results.map((g) =>
-            ansIds.has(g.answer_id)
+          grading_results,
+          submissions: prev.submissions.map((sub) =>
+            sub.id === submissionId
               ? {
-                  ...g,
-                  teacher_score: g.teacher_score ?? g.ai_score,
-                  status: "FINAL",
-                  updated_at: now(),
+                  ...sub,
+                  teacher_level: sub.teacher_level ?? predominantLevel(levels),
                 }
-              : g,
+              : sub,
           ),
         };
       });
@@ -1171,24 +1200,24 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  const setCriterionTeacherPoints = useCallback<
-    DataContextValue["setCriterionTeacherPoints"]
-  >(async (gradingId, criterionId, points) => {
+  const setCriterionTeacherLevel = useCallback<
+    DataContextValue["setCriterionTeacherLevel"]
+  >(async (gradingId, criterionId, level) => {
     setDb((prev) => ({
       ...prev,
       grading_results: prev.grading_results.map((g) => {
         if (g.id !== gradingId) return g;
-        const criterion_scores = g.criterion_scores.map((c) =>
-          c.criterion_id === criterionId ? { ...c, teacher_points: points } : c,
+        const criterion_levels = g.criterion_levels.map((c) =>
+          c.criterion_id === criterionId ? { ...c, teacher_level: level } : c,
         );
-        const teacher_score = criterion_scores.reduce(
-          (acc, c) => acc + (c.teacher_points ?? c.ai_points),
-          0,
+        // El nivel de la evidencia se recalcula como el predominante de sus criterios.
+        const teacher_level = predominantLevel(
+          criterion_levels.map((c) => c.teacher_level ?? c.ai_level),
         );
         return {
           ...g,
-          criterion_scores,
-          teacher_score,
+          criterion_levels,
+          teacher_level,
           status: "TEACHER_REVIEW" as AnswerStatus,
           updated_at: now(),
         };
@@ -1201,8 +1230,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const resultsOf = useCallback<DataContextValue["resultsOf"]>(
     (activityId) => {
       const subs = db.submissions.filter((s) => s.activity_id === activityId);
-      const questions = db.questions.filter((q) => q.activity_id === activityId);
-      const maxTotal = questions.reduce((acc, q) => acc + q.points, 0);
       const studentIds = new Set(subs.map((s) => s.student_id).filter(Boolean));
 
       return Array.from(studentIds)
@@ -1215,10 +1242,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             : [];
           const ansIds = new Set(answers.map((a) => a.id));
           const grades = db.grading_results.filter((g) => ansIds.has(g.answer_id));
-          const aiTotal = grades.reduce((acc, g) => acc + g.ai_score, 0);
-          const finalTotal = grades.length
-            ? grades.reduce((acc, g) => acc + (g.teacher_score ?? g.ai_score), 0)
-            : null;
+          const suggestedLevel =
+            submission?.ai_level ?? predominantLevel(grades.map((g) => g.ai_level));
           let status: ResultRow["status"] = "SIN_ENTREGA";
           if (grades.length) {
             status = grades.every((g) => g.status === "FINAL")
@@ -1229,7 +1254,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           } else if (submission) {
             status = submission.status === "PROCESSING" ? "PROCESSING" : "PENDING";
           }
-          return { student, submission, finalTotal, aiTotal, maxTotal, status };
+          const finalLevel =
+            status === "FINAL"
+              ? (submission?.teacher_level ??
+                predominantLevel(grades.map((g) => g.teacher_level ?? g.ai_level)))
+              : null;
+          return { student, submission, finalLevel, suggestedLevel, status };
         })
         .filter((r): r is ResultRow => r !== null)
         .sort((a, b) => a.student.name.localeCompare(b.student.name));
@@ -1290,11 +1320,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     sendFeedback,
     findStudentByCode,
     studentProgress,
-    setTeacherScore,
+    setTeacherLevel,
+    setSubmissionLevel,
     setTeacherFeedback,
     approveGrading,
     approveAllGrading,
-    setCriterionTeacherPoints,
+    setCriterionTeacherLevel,
     resultsOf,
     resetDemoData,
     clearAllData,

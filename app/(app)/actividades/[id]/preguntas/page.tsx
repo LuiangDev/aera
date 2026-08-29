@@ -22,7 +22,6 @@ export default function PreguntasPage() {
 
   const low = questions.filter((q) => q.confidence < CONFIDENCE_THRESHOLD);
   const unconfirmed = questions.filter((q) => !q.confirmed);
-  const total = questions.reduce((acc, q) => acc + q.points, 0);
 
   if (questions.length === 0) {
     return (
@@ -49,13 +48,7 @@ export default function PreguntasPage() {
       <Card className="mb-6 flex flex-col gap-4 p-6 md:flex-row md:items-center md:justify-between">
         <div className="space-y-1">
           <p className="font-sans text-body-md text-on-background">
-            {questions.length} preguntas · {total} puntos en total
-            {total !== activity.max_score && (
-              <span className="text-status-pending-text">
-                {" "}
-                (el puntaje máximo de la actividad es {activity.max_score})
-              </span>
-            )}
+            {questions.length} preguntas · criterios valorados con niveles de logro
           </p>
           <p className="font-sans text-body-sm text-on-surface-variant">
             {low.length > 0 ? (

@@ -251,8 +251,8 @@ export function FeedbackComposer({ submission }: { submission: SubmissionWithMet
                     ¿Quieres un punto de partida?
                   </p>
                   <p className="font-sans text-body-sm text-on-surface-variant">
-                    La IA puede redactar una propuesta con lo que ya corregiste: puntajes,
-                    criterios cumplidos y los que no.
+                    La IA puede redactar una propuesta con lo que ya corregiste: niveles de
+                    logro, criterios alcanzados y los que requieren acompañamiento.
                   </p>
                 </div>
                 <Button
@@ -468,8 +468,8 @@ export function FeedbackComposer({ submission }: { submission: SubmissionWithMet
             </DialogTitle>
             <DialogDescription>
               {submission.student?.guardian_name
-                ? `${submission.student.guardian_name} podrá verla en el portal de seguimiento, junto con la nota confirmada.`
-                : "El apoderado podrá verla en el portal de seguimiento, junto con la nota confirmada."}{" "}
+                ? `${submission.student.guardian_name} podrá verla en el portal de seguimiento, junto con el nivel de logro confirmado.`
+                : "El apoderado podrá verla en el portal de seguimiento, junto con el nivel de logro confirmado."}{" "}
               Puedes editarla y volver a enviarla después.
             </DialogDescription>
           </DialogHeader>
@@ -490,8 +490,8 @@ export function FeedbackComposer({ submission }: { submission: SubmissionWithMet
             {!submission.isFinal && (
               <p className="flex items-start gap-1.5 font-sans text-body-sm text-status-pending-text">
                 <Icon name="priority_high" size={20} className="text-[18px]" />
-                Esta entrega todavía tiene puntajes sin confirmar. La familia verá tu
-                mensaje, pero no la nota hasta que la apruebes.
+                Esta entrega todavía tiene valoraciones sin confirmar. La familia verá tu
+                mensaje, pero no el nivel de logro hasta que lo apruebes.
               </p>
             )}
           </div>

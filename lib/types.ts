@@ -1,8 +1,12 @@
+import type { AchievementLevel, EducationLevel } from "@/lib/evaluacion";
+
 /**
- * Modelo de datos — docs/PROJECT_CONTEXT.md §22.
- * Estos tipos son el contrato entre la UI y la capa de acceso a datos (lib/data/repository.ts).
- * Cuando el backend real de Supabase entre, cambia la implementación del repositorio,
- * no estos tipos ni los componentes.
+ * Modelo de datos — docs/PROJECT_CONTEXT.md §22, adecuado a la normativa de evaluación
+ * por competencias del MINEDU (RVM 094-2020 y RVM 048-2024, ver lib/evaluacion.ts).
+ *
+ * Cambio de fondo respecto de la versión anterior: NO hay puntajes vigesimales. Las
+ * evidencias se valoran con niveles de logro (AD/A/B/C) por criterio, y el nivel de la
+ * competencia se determina a partir de esas valoraciones — nunca promediando.
  */
 
 /** §14 — tipos soportados en el MVP. La arquitectura permite agregar más después. */
@@ -31,17 +35,18 @@ export type AnswerStatus =
 export type ActivityStatus = "borrador" | "en_correccion" | "completada";
 
 /** Estado del documento dentro del pipeline de procesamiento (§26). */
-export type ProcessingStatus =
-  | "PENDING"
-  | "PROCESSING"
-  | "READY"
-  | "FAILED";
+export type ProcessingStatus = "PENDING" | "PROCESSING" | "READY" | "FAILED";
 
-/** §16 — criterio con puntaje propio; la suma da el puntaje de la pregunta. */
+/**
+ * §16 — criterio de evaluación de la rúbrica.
+ * Ya no lleva puntaje: la rúbrica describe qué se espera, y cada criterio se valora con
+ * un nivel de logro. Opcionalmente el docente puede escribir el descriptor de cada nivel,
+ * que es la forma completa de una rúbrica según la norma.
+ */
 export interface Criterion {
   id: string;
   description: string;
-  points: number;
+  descriptors?: Partial<Record<AchievementLevel, string>>;
 }
 
 export interface Teacher {
@@ -49,26 +54,26 @@ export interface Teacher {
   email: string;
   name: string;
   created_at: string;
+  /** Define cuándo la conclusión descriptiva es obligatoria (RVM 048-2024). */
+  education_level: EducationLevel;
 }
 
 export interface Activity {
   id: string;
   teacher_id: string;
   title: string;
+  /** Área curricular (Matemática, Comunicación, …). */
   subject: string;
+  /** Competencia del CNEB que la actividad evalúa. El objeto de evaluación es esta. */
+  competency: string;
   description: string;
-  max_score: number;
-  /**
-   * §10 lista "fecha" entre los campos de crear actividad, pero el esquema de §22 no la
-   * incluye. Se agrega como opcional para no perder el campo de la UI; queda pendiente
-   * confirmarla antes de escribir la migración definitiva.
-   */
+  /** Nivel educativo con el que se evalúa esta actividad. */
+  education_level: EducationLevel;
   application_date?: string;
   created_at: string;
   updated_at: string;
   /** Documento original de la actividad (§11). Se conserva siempre. */
   source_files: SourceFile[];
-  /** Estado del pipeline de extracción de preguntas. */
   processing_status: ProcessingStatus;
 }
 
@@ -89,15 +94,11 @@ export interface Question {
   text: string;
   options: string[];
   expected_answer: string;
-  points: number;
-  /** §16 — lista estructurada, no texto libre. */
+  /** §16 — criterios de la rúbrica, sin puntaje. */
   rubric: Criterion[];
   /** §28 — 0–1. Bajo CONFIDENCE_THRESHOLD se marca para revisión prioritaria. */
   confidence: number;
-  /**
-   * Añadido sobre §22: sin esto la UI no puede aplicar el patrón de §8.9 en el editor
-   * (una pregunta extraída por IA es una sugerencia hasta que el docente la confirma).
-   */
+  /** Necesario para el patrón de §8.9 en el editor de preguntas. */
   confirmed: boolean;
   created_at: string;
   updated_at: string;
@@ -109,33 +110,19 @@ export interface Student {
   name: string;
   identifier: string;
   created_at: string;
-  /**
-   * Apoderado. En esta fase el estudiante NO tiene usuario propio: quien entra al portal
-   * de seguimiento es su apoderado (PROJECT_CONTEXT.md §33 deja el portal de estudiante
-   * fuera del MVP; esta variante familiar queda marcada como prototipo).
-   */
+  /** Quien accede al portal de seguimiento en esta fase. */
   guardian_name?: string;
 }
 
-/**
- * Nota de voz del docente (DESIGN_SYSTEM.md §8.7).
- *
- * PROTOTIPO: el audio se graba en el navegador con MediaRecorder y vive como `blob:` en
- * memoria durante la sesión. NO se sube a Storage todavía — cuando exista el bucket,
- * `object_url` pasa a ser la ruta firmada de Supabase y el resto de campos no cambia.
- */
+/** Nota de voz del docente (DESIGN_SYSTEM.md §8.7). */
 export interface VoiceNote {
   id: string;
   duration_seconds: number;
   created_at: string;
   /** blob: en el prototipo; URL firmada de Storage cuando exista el backend. */
   object_url?: string;
-  /** Amplitudes 0–1 para dibujar la onda simplificada de §8.7 de forma estable. */
   waveform: number[];
-  /**
-   * Reinterpretación escrita del audio, generada por IA. Es una SUGERENCIA: se muestra
-   * con el patrón de §8.9 y el docente decide si la usa, la edita o la descarta.
-   */
+  /** Reinterpretación escrita del audio, sugerida por IA (§8.9). */
   ai_transcript?: string;
 }
 
@@ -150,24 +137,19 @@ export interface Submission {
   created_at: string;
   processed_at: string | null;
   /**
-   * Retroalimentación de cierre para toda la entrega, escrita por el docente.
-   * Es distinta del `teacher_feedback` por respuesta de `GradingResult` (§22): esta es el
-   * mensaje global al estudiante, no el comentario de una pregunta.
+   * Conclusión descriptiva de la competencia (RVM 048-2024). Es el texto que se informa a
+   * la familia; obligatorio según nivel educativo y nivel de logro alcanzado.
    */
   teacher_feedback: string | null;
-  /** Mensaje de voz que acompaña (o reemplaza) al texto. */
   voice_note: VoiceNote | null;
-  /**
-   * Retroalimentación global SUGERIDA por la IA a partir de toda la corrección
-   * (respuestas + criterios + puntajes). Nunca se entrega tal cual: el docente la
-   * aprueba o la edita, y hasta entonces se muestra con el patrón de §8.9.
-   */
   ai_feedback_draft: string | null;
-  /**
-   * Momento en que el docente ENVIÓ la retroalimentación a la familia.
-   * Mientras sea null, nada de esto es visible en el portal del apoderado.
-   */
   feedback_sent_at: string | null;
+  /**
+   * Nivel de logro de la competencia para esta evidencia.
+   * `ai_level` es sugerencia; `teacher_level` es el que vale (§19).
+   */
+  ai_level: AchievementLevel | null;
+  teacher_level: AchievementLevel | null;
 }
 
 export interface Answer {
@@ -175,29 +157,29 @@ export interface Answer {
   submission_id: string;
   question_id: string;
   extracted_text: string;
-  /** §22/§28 — confianza de la extracción de esta respuesta. */
   confidence: number;
-  /** §22 — zona del documento original de la que salió la extracción. */
   source_region?: string;
   created_at: string;
 }
 
-/** Evaluación por criterio (§16) — la IA evalúa cada criterio por separado. */
-export interface CriterionScore {
+/** Valoración de un criterio de la rúbrica con la escala oficial. */
+export interface CriterionLevel {
   criterion_id: string;
-  ai_points: number;
-  teacher_points: number | null;
+  ai_level: AchievementLevel;
+  teacher_level: AchievementLevel | null;
   comment: string;
 }
 
 export interface GradingResult {
   id: string;
   answer_id: string;
-  ai_score: number;
-  teacher_score: number | null;
+  /** Nivel sugerido por la IA para esta evidencia. */
+  ai_level: AchievementLevel;
+  /** Nivel confirmado por el docente. La decisión final siempre es suya (§19). */
+  teacher_level: AchievementLevel | null;
   ai_feedback: string;
   teacher_feedback: string | null;
-  criterion_scores: CriterionScore[];
+  criterion_levels: CriterionLevel[];
   status: AnswerStatus;
   created_at: string;
   updated_at: string;

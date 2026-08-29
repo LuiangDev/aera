@@ -40,7 +40,6 @@ export default function ActividadResumenPage() {
   const graded = submissions.filter((s) => s.isFinal).length;
   const lowConfidence = questions.filter((q) => q.confidence < CONFIDENCE_THRESHOLD);
   const unconfirmed = questions.filter((q) => !q.confirmed);
-  const rubricPoints = questions.reduce((acc, q) => acc + q.points, 0);
   const unassigned = submissions.filter((s) => !s.student).length;
 
   const steps = [
@@ -89,17 +88,10 @@ export default function ActividadResumenPage() {
       <div className="mb-6 grid grid-cols-3 gap-3 sm:gap-gutter">
         <Card className="p-4 sm:p-6">
           <p className="font-sans text-label-sm uppercase tracking-wider text-secondary">
-            Puntaje máximo
+            Competencia
           </p>
-          <p className="mt-1 font-sans text-headline-md text-on-background">
-            {activity.max_score}
-          </p>
-          {questions.length > 0 && rubricPoints !== activity.max_score && (
-            <p className="mt-2 inline-flex items-start gap-1.5 font-sans text-body-sm text-status-pending-text">
-              <Icon name="priority_high" size={20} className="text-[18px]" />
-              La suma de las preguntas es {rubricPoints}. Revisa los puntajes.
-            </p>
-          )}
+          <p className="mt-1 font-sans text-body-md text-on-background">{activity.competency}</p>
+          <p className="mt-2 font-sans text-body-sm text-on-surface-variant">La evidencia se valora con AD, A, B o C.</p>
         </Card>
         <Card className="p-4 sm:p-6">
           <p className="font-sans text-label-sm uppercase tracking-wider text-secondary">

@@ -40,8 +40,6 @@ export function QuestionEditorCard({ question }: { question: Question }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const low = isLowConfidence(question.confidence);
-  const rubricTotal = question.rubric.reduce((acc, c) => acc + c.points, 0);
-  const rubricMismatch = question.rubric.length > 0 && rubricTotal !== question.points;
   const isAiExtracted = question.confidence < 1;
 
   return (
@@ -100,7 +98,7 @@ export function QuestionEditorCard({ question }: { question: Question }) {
       )}
 
       <div className="grid gap-5">
-        <div className="grid gap-5 sm:grid-cols-[1fr_180px]">
+        <div className="grid gap-5">
           <Field label="Enunciado" htmlFor={`text-${question.id}`}>
             <Textarea
               id={`text-${question.id}`}
@@ -110,42 +108,27 @@ export function QuestionEditorCard({ question }: { question: Question }) {
             />
           </Field>
 
-          <div className="space-y-5">
-            <Field label="Tipo" htmlFor={`type-${question.id}`}>
-              <Select
-                id={`type-${question.id}`}
-                value={question.type}
-                onChange={(e) =>
-                  updateQuestion(question.id, {
-                    type: e.target.value as QuestionType,
-                    options:
-                      e.target.value === "multiple_choice" && question.options.length === 0
-                        ? ["", "", "", ""]
-                        : question.options,
-                  })
-                }
-              >
-                {Object.entries(QUESTION_TYPE_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-
-            <Field label="Puntaje" htmlFor={`points-${question.id}`}>
-              <Input
-                id={`points-${question.id}`}
-                type="number"
-                min={0}
-                step="0.5"
-                value={question.points}
-                onChange={(e) =>
-                  updateQuestion(question.id, { points: Number(e.target.value) })
-                }
-              />
-            </Field>
-          </div>
+          <Field label="Tipo" htmlFor={`type-${question.id}`}>
+            <Select
+              id={`type-${question.id}`}
+              value={question.type}
+              onChange={(e) =>
+                updateQuestion(question.id, {
+                  type: e.target.value as QuestionType,
+                  options:
+                    e.target.value === "multiple_choice" && question.options.length === 0
+                      ? ["", "", "", ""]
+                      : question.options,
+                })
+              }
+            >
+              {Object.entries(QUESTION_TYPE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+          </Field>
         </div>
 
         {question.type === "multiple_choice" && (
@@ -235,7 +218,7 @@ export function QuestionEditorCard({ question }: { question: Question }) {
           )}
         </Field>
 
-        {/* §16 — criterios con puntaje propio */}
+        {/* §16 — criterios que se valoran con niveles de logro */}
         <div className="rounded-lg border border-surface-border bg-surface-container-low p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -243,17 +226,9 @@ export function QuestionEditorCard({ question }: { question: Question }) {
                 Criterios de corrección
               </p>
               <p className="font-sans text-body-sm text-on-surface-variant">
-                La IA evalúa cada criterio por separado, no solo el puntaje global.
+                La IA valora cada criterio por separado con AD, A, B o C; el docente lo revisa.
               </p>
             </div>
-            <span
-              className={cn(
-                "font-sans text-body-sm",
-                rubricMismatch ? "text-status-pending-text" : "text-on-surface-variant",
-              )}
-            >
-              {rubricTotal} / {question.points} pts
-            </span>
           </div>
 
           {question.rubric.length === 0 ? (
@@ -277,19 +252,6 @@ export function QuestionEditorCard({ question }: { question: Question }) {
                       })
                     }
                   />
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.5"
-                    className="w-24 shrink-0"
-                    aria-label={`Puntaje del criterio ${i + 1}`}
-                    value={criterion.points}
-                    onChange={(e) =>
-                      updateCriterion(question.id, criterion.id, {
-                        points: Number(e.target.value),
-                      })
-                    }
-                  />
                   <Button
                     variant="icon"
                     size="icon"
@@ -302,13 +264,6 @@ export function QuestionEditorCard({ question }: { question: Question }) {
                 </li>
               ))}
             </ul>
-          )}
-
-          {rubricMismatch && (
-            <p className="mb-3 flex items-center gap-1.5 font-sans text-body-sm text-status-pending-text">
-              <Icon name="priority_high" size={20} className="text-[18px]" />
-              Los criterios suman {rubricTotal} y la pregunta vale {question.points}.
-            </p>
           )}
 
           <Button variant="secondary" size="sm" onClick={() => addCriterion(question.id)}>

@@ -302,7 +302,7 @@ export default function RespuestasPage() {
               <ProgressSteps steps={SUBMISSION_PIPELINE_STEPS} current={-1} />
               <p className="font-sans text-label-sm text-on-surface-variant">
                 Cada entrega recorre estos pasos. La corrección que produce es una
-                sugerencia: tú decides la nota final.
+                sugerencia: tú decides el nivel de logro final.
               </p>
             </CardContent>
           </Card>

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { Icon } from "@/components/ui/icon";
 import { useData } from "@/lib/data/provider";
+import { EDUCATION_LEVEL_LABELS, type EducationLevel } from "@/lib/evaluacion";
 
 const MATERIAS = [
   "Matemática",
@@ -27,9 +28,10 @@ export default function NuevaActividadPage() {
   const [form, setForm] = useState({
     title: "",
     subject: MATERIAS[0],
+    competency: "",
+    education_level: "primaria" as EducationLevel,
     description: "",
     application_date: "",
-    max_score: "20",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -38,9 +40,8 @@ export default function NuevaActividadPage() {
     e.preventDefault();
     const next: Record<string, string> = {};
     if (!form.title.trim()) next.title = "Ponle un nombre a la actividad.";
-    const max = Number(form.max_score);
-    if (!Number.isFinite(max) || max <= 0)
-      next.max_score = "El puntaje máximo debe ser un número mayor que cero.";
+    if (!form.competency.trim())
+      next.competency = "Indica la competencia que se evaluará.";
     setErrors(next);
     if (Object.keys(next).length) return;
 
@@ -49,8 +50,9 @@ export default function NuevaActividadPage() {
       const activity = await createActivity({
         title: form.title.trim(),
         subject: form.subject,
+        competency: form.competency.trim(),
+        education_level: form.education_level,
         description: form.description.trim(),
-        max_score: max,
         application_date: form.application_date || undefined,
       });
       toast.success("Actividad creada. Ahora sube o escanea la evaluación.");
@@ -99,6 +101,25 @@ export default function NuevaActividadPage() {
                 </Select>
               </Field>
 
+              <Field label="Nivel educativo" htmlFor="education_level" required>
+                <Select
+                  id="education_level"
+                  value={form.education_level}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      education_level: e.target.value as EducationLevel,
+                    }))
+                  }
+                >
+                  {Object.entries(EDUCATION_LEVEL_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+
               <Field label="Fecha de aplicación" htmlFor="application_date">
                 <Input
                   id="application_date"
@@ -111,6 +132,16 @@ export default function NuevaActividadPage() {
               </Field>
             </div>
 
+            <Field label="Competencia" htmlFor="competency" error={errors.competency} required>
+              <Input
+                id="competency"
+                value={form.competency}
+                aria-invalid={Boolean(errors.competency)}
+                onChange={(e) => setForm((f) => ({ ...f, competency: e.target.value }))}
+                placeholder="Resuelve problemas de cantidad"
+              />
+            </Field>
+
             <Field label="Descripción" htmlFor="description">
               <Textarea
                 id="description"
@@ -120,24 +151,10 @@ export default function NuevaActividadPage() {
               />
             </Field>
 
-            <Field
-              label="Puntaje máximo"
-              htmlFor="max_score"
-              hint="Si al definir las preguntas la suma de puntajes no coincide, te avisamos."
-              error={errors.max_score}
-              required
-            >
-              <Input
-                id="max_score"
-                type="number"
-                min={1}
-                step="0.5"
-                className="max-w-[160px]"
-                value={form.max_score}
-                aria-invalid={Boolean(errors.max_score)}
-                onChange={(e) => setForm((f) => ({ ...f, max_score: e.target.value }))}
-              />
-            </Field>
+            <p className="rounded-lg border border-surface-border bg-surface-container-low p-3 font-sans text-body-sm text-on-surface-variant">
+              La actividad se valora con niveles de logro AD, A, B y C mediante criterios;
+              no con un puntaje numérico.
+            </p>
 
             <div className="flex flex-col gap-3 pt-2 sm:flex-row">
               <Button type="submit" disabled={loading}>

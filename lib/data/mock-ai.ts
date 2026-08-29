@@ -1,81 +1,84 @@
-import type {
-  Answer,
-  CriterionScore,
-  GradingResult,
-  Question,
-  Submission,
-} from "@/lib/types";
+import type { Answer, CriterionLevel, GradingResult, Question, Submission } from "@/lib/types";
+import type { AchievementLevel, EducationLevel } from "@/lib/evaluacion";
+import { ACHIEVEMENT_LEVELS, conclusionRequired } from "@/lib/evaluacion";
 import { uid } from "@/lib/data/db";
 
 /**
  * Simulación del pipeline OCR + IA (§12, §13, §26, §28).
  *
  * IMPORTANTE: este módulo NO es el pipeline real. Existe para que el front sea navegable
- * y funcional antes de que exista backend. Cuando se construya el pipeline real
- * (Edge Function → proveedor multimodal → JSON validado), se reemplaza este archivo
- * completo y el repositorio pasa a leer de Supabase — la UI no cambia, porque consume
- * exactamente la misma forma de datos.
+ * antes de que exista backend. Se reemplaza entero cuando se construya el pipeline real,
+ * después de la validación técnica de §5.
  *
- * Antes de construir ese pipeline hay que correr la validación técnica de §5
- * (3-5 documentos reales, al menos uno manuscrito).
+ * Regla de coherencia: la valoración y el comentario que genera esta simulación tienen que
+ * ser consistentes entre sí. Una respuesta correcta no puede salir marcada como error.
  */
 
 const now = () => new Date().toISOString();
 
 /** Plantillas de preguntas para simular una extracción con confianza variable. */
-const EXTRACTION_TEMPLATES: Array<Omit<Question, "id" | "activity_id" | "created_at" | "updated_at">> = [
+const EXTRACTION_TEMPLATES: Array<
+  Omit<Question, "id" | "activity_id" | "created_at" | "updated_at">
+> = [
   {
     number: 1,
     type: "multiple_choice",
-    text: "¿Cuál de las siguientes afirmaciones es correcta?",
+    text: "¿Cuál de las siguientes afirmaciones corresponde al concepto trabajado en clase?",
     options: ["Afirmación A", "Afirmación B", "Afirmación C", "Afirmación D"],
     expected_answer: "Afirmación C",
-    points: 2,
-    rubric: [],
+    rubric: [{ id: "c_ext_1", description: "Reconoce el concepto correcto" }],
     confidence: 0.93,
     confirmed: false,
   },
   {
     number: 2,
     type: "short_answer",
-    text: "Escribe la definición del concepto trabajado en clase.",
+    text: "Escribe con tus palabras la definición del concepto trabajado en clase.",
     options: [],
     expected_answer: "",
-    points: 3,
-    rubric: [],
+    rubric: [
+      { id: "c_ext_2a", description: "Expresa la idea central del concepto" },
+      { id: "c_ext_2b", description: "Usa vocabulario propio del área" },
+    ],
     confidence: 0.86,
     confirmed: false,
   },
   {
     number: 3,
     type: "open_ended",
-    text: "Explica con tus palabras el procedimiento que utilizaste.",
+    text: "Explica el procedimiento que utilizaste para resolver la situación planteada.",
     options: [],
     expected_answer: "",
-    points: 5,
-    rubric: [],
+    rubric: [
+      { id: "c_ext_3a", description: "Describe los pasos en orden" },
+      { id: "c_ext_3b", description: "Justifica por qué eligió ese procedimiento" },
+    ],
     confidence: 0.68,
     confirmed: false,
   },
   {
     number: 4,
     type: "long_answer",
-    text: "Desarrolla un ejemplo propio y justifica tu respuesta.",
+    text: "Desarrolla un ejemplo propio y explica cómo se relaciona con lo trabajado.",
     options: [],
     expected_answer: "",
-    points: 6,
-    rubric: [],
+    rubric: [
+      { id: "c_ext_4a", description: "Propone un ejemplo pertinente" },
+      { id: "c_ext_4b", description: "Relaciona el ejemplo con el contenido de la clase" },
+    ],
     confidence: 0.59,
     confirmed: false,
   },
   {
     number: 5,
     type: "short_answer",
-    text: "Completa el resultado de la operación planteada.",
+    text: "Completa el resultado de la situación planteada y verifica tu respuesta.",
     options: [],
     expected_answer: "",
-    points: 4,
-    rubric: [],
+    rubric: [
+      { id: "c_ext_5a", description: "Obtiene el resultado correcto" },
+      { id: "c_ext_5b", description: "Verifica o comprueba su respuesta" },
+    ],
     confidence: 0.81,
     confirmed: false,
   },
@@ -87,22 +90,53 @@ export function extractQuestions(activityId: string, count = 5): Question[] {
     ...tpl,
     id: uid("q"),
     activity_id: activityId,
+    rubric: tpl.rubric.map((c) => ({ ...c, id: uid("c") })),
     created_at: now(),
     updated_at: now(),
   }));
 }
 
-const STUDENT_ANSWER_POOL = [
-  "Es una parte de un todo, cuando se divide en partes iguales.",
-  "Lo resolví buscando el denominador común y después sumé los numeradores.",
-  "No estoy seguro, pero creo que se hace dividiendo entre dos.",
-  "La respuesta es 7/8 porque 3/4 equivale a 6/8.",
-  "Porque lo importante no siempre se puede ver a simple vista.",
+/** Respuestas simuladas, cada una con el nivel que efectivamente le corresponde. */
+const SIMULATED_ANSWERS: { text: string; level: AchievementLevel }[] = [
+  {
+    text: "Resolví la situación siguiendo los pasos que vimos en clase y comprobé el resultado al final.",
+    level: "A",
+  },
+  {
+    text: "Expliqué el procedimiento y agregué un ejemplo propio para mostrar cómo se aplica.",
+    level: "AD",
+  },
+  {
+    text: "Llegué al resultado, pero no alcancé a explicar cómo lo hice.",
+    level: "B",
+  },
+  {
+    text: "Intenté resolverlo, aunque me confundí en el procedimiento y no llegué al resultado.",
+    level: "C",
+  },
+  {
+    text: "Respondí con la idea principal, aunque me faltó desarrollarla más.",
+    level: "B",
+  },
 ];
+
+const COMMENT_BY_LEVEL: Record<AchievementLevel, string> = {
+  AD: "Supera lo esperado: resuelve con seguridad y además explica y ejemplifica.",
+  A: "Cumple con lo esperado para esta competencia en todas las tareas propuestas.",
+  B: "Está próximo a lo esperado: requiere acompañamiento para afianzar el procedimiento.",
+  C: "Muestra un progreso mínimo respecto a lo esperado: necesita acompañamiento sostenido.",
+};
+
+const CRITERION_COMMENT: Record<AchievementLevel, string> = {
+  AD: "Supera lo esperado en este criterio.",
+  A: "Cumple con lo esperado en este criterio.",
+  B: "Se acerca a lo esperado: requiere acompañamiento.",
+  C: "Todavía no evidencia este criterio.",
+};
 
 /**
  * §13.2 — corrección: Pregunta + Respuesta esperada + Criterios + Respuesta del estudiante
- * → evaluación, puntaje sugerido, justificación y feedback, con desglose por criterio (§16).
+ * → nivel de logro sugerido por criterio y para la evidencia completa (§16).
  */
 export function gradeSubmission(
   submission: Submission,
@@ -112,43 +146,39 @@ export function gradeSubmission(
   const grading: GradingResult[] = [];
 
   questions.forEach((q, i) => {
+    const simulated = SIMULATED_ANSWERS[i % SIMULATED_ANSWERS.length];
+
     const answer: Answer = {
       id: uid("ans"),
       submission_id: submission.id,
       question_id: q.id,
-      extracted_text: STUDENT_ANSWER_POOL[i % STUDENT_ANSWER_POOL.length],
+      extracted_text: simulated.text,
       confidence: [0.91, 0.64, 0.87, 0.73, 0.95][i % 5],
       source_region: `p1:${18 + i * 13}%,${10 + i * 4}%`,
       created_at: now(),
     };
     answers.push(answer);
 
-    const ratio = [0.75, 1, 0.5, 0.9, 0.8][i % 5];
-    const criterion_scores: CriterionScore[] = q.rubric.map((c, ci) => ({
-      criterion_id: c.id,
-      ai_points: Math.round(c.points * [1, 0.5, 0.75][(i + ci) % 3] * 2) / 2,
-      teacher_points: null,
-      comment:
-        [1, 0.5, 0.75][(i + ci) % 3] === 1
-          ? "El criterio se cumple explícitamente en la respuesta."
-          : "El criterio se cumple solo de forma parcial.",
-    }));
-
-    const ai_score = criterion_scores.length
-      ? criterion_scores.reduce((acc, c) => acc + c.ai_points, 0)
-      : Math.round(q.points * ratio * 2) / 2;
+    const criterion_levels: CriterionLevel[] = q.rubric.map((c, ci) => {
+      let ai_level: AchievementLevel = simulated.level;
+      if (simulated.level === "AD") ai_level = ci === 0 ? "AD" : "A";
+      if (simulated.level === "B") ai_level = ci === 0 ? "A" : "B";
+      return {
+        criterion_id: c.id,
+        ai_level,
+        teacher_level: null,
+        comment: CRITERION_COMMENT[ai_level],
+      };
+    });
 
     grading.push({
       id: uid("gr"),
       answer_id: answer.id,
-      ai_score,
-      teacher_score: null,
-      ai_feedback:
-        ai_score >= q.points
-          ? "La respuesta cubre todos los criterios definidos para esta pregunta."
-          : "La respuesta demuestra comprensión parcial del concepto: falta desarrollar alguno de los criterios definidos.",
+      ai_level: simulated.level,
+      teacher_level: null,
+      ai_feedback: COMMENT_BY_LEVEL[simulated.level],
       teacher_feedback: null,
-      criterion_scores,
+      criterion_levels,
       status: "AI_REVIEWED",
       created_at: now(),
       updated_at: now(),
@@ -159,58 +189,60 @@ export function gradeSubmission(
 }
 
 /**
- * Retroalimentación global sugerida por IA a partir de toda la corrección.
- * Se arma con datos reales de la entrega (puntaje, criterios cumplidos y no cumplidos),
- * no con texto genérico: es lo que haría el modelo con el mismo insumo.
+ * Conclusión descriptiva sugerida por IA (RVM 048-2024).
+ *
+ * La norma exige que la conclusión descriptiva incluya "recomendaciones personalizadas
+ * orientadas al desarrollo de cada competencia", y que se redacte con lenguaje que
+ * transmita altas expectativas (RVM 094-2020, 5.1.1 punto 13). El borrador se arma con
+ * esa estructura: dónde está, qué evidencia lo sostiene y qué hacer para avanzar.
  *
  * SIEMPRE es una sugerencia (§19, §31): el docente la aprueba o la edita antes de enviar.
  */
 export function buildFeedbackDraft(input: {
   studentName: string;
-  total: number;
-  maxTotal: number;
+  competency: string;
+  level: AchievementLevel | null;
+  educationLevel: EducationLevel;
   strengths: string[];
   gaps: string[];
-  /** false cuando la nota todavía no está confirmada: el borrador no menciona el puntaje. */
-  includeScore: boolean;
+  /** false mientras el docente no haya confirmado el nivel: el borrador no lo afirma. */
+  levelConfirmed: boolean;
 }): string {
-  const nombre = input.studentName.split(" ")[0] || "Hola";
-  const ratio = input.maxTotal ? input.total / input.maxTotal : 0;
-
-  // Si la nota todavía no está confirmada, el borrador NO menciona el puntaje: de lo
-  // contrario un número provisional llegaría a la familia dentro del texto (§19, §31).
-  const puntaje = input.includeScore ? ` (${input.total} de ${input.maxTotal})` : "";
+  const nombre = input.studentName.split(" ")[0] || "El estudiante";
+  const nivel = input.level ? ACHIEVEMENT_LEVELS[input.level] : null;
 
   const apertura =
-    ratio >= 0.85
-      ? `${nombre}, tu trabajo está muy bien resuelto${puntaje}.`
-      : ratio >= 0.6
-        ? `${nombre}, tu trabajo va por buen camino${puntaje}.`
-        : `${nombre}, hay varias cosas por reforzar en este trabajo${puntaje}.`;
+    nivel && input.levelConfirmed
+      ? `${nombre} se encuentra en nivel ${nivel.code} (${nivel.label.toLowerCase()}) en la competencia «${input.competency}».`
+      : `${nombre} evidencia el siguiente avance en la competencia «${input.competency}».`;
 
-  const fuerte = input.strengths.length
-    ? ` Lo que resolviste con claridad: ${input.strengths.slice(0, 2).join("; ")}.`
+  const logros = input.strengths.length
+    ? ` Logra: ${input.strengths.slice(0, 2).join("; ")}.`
     : "";
 
-  const brecha = input.gaps.length
-    ? ` Conviene que trabajes: ${input.gaps.slice(0, 2).join("; ")}.`
-    : " Mantén ese nivel en la próxima evaluación.";
+  const porTrabajar = input.gaps.length
+    ? ` Aún requiere apoyo para: ${input.gaps.slice(0, 2).join("; ")}.`
+    : "";
 
-  const cierre =
-    ratio >= 0.6
-      ? " Sigue explicando tu procedimiento paso a paso: eso hace visible lo que ya entiendes."
-      : " Repasemos juntos estos puntos en la próxima clase.";
+  // Recomendación personalizada: la norma la exige en toda conclusión descriptiva.
+  const recomendacion = input.gaps.length
+    ? ` Se recomienda acompañarlo con ejercicios donde explique su procedimiento antes de dar el resultado, y retomar estos criterios en la próxima experiencia de aprendizaje.`
+    : ` Se recomienda proponerle situaciones de mayor complejidad para que siga ampliando lo que ya domina.`;
 
-  return `${apertura}${fuerte}${brecha}${cierre}`;
+  const obligatoria =
+    input.level && conclusionRequired(input.educationLevel, input.level);
+
+  const cierre = obligatoria
+    ? " Con el acompañamiento adecuado puede alcanzar el nivel esperado."
+    : " Continúa con ese nivel de trabajo en las próximas actividades.";
+
+  return `${apertura}${logros}${porTrabajar}${recomendacion}${cierre}`;
 }
 
 /**
  * Reinterpretación escrita de un mensaje de voz.
  *
  * PROTOTIPO: no hay transcripción real — no se envía audio a ningún proveedor todavía.
- * Devuelve un texto de ejemplo con la forma que tendría la salida real para que el flujo
- * se pueda evaluar. La interfaz lo declara como simulado; no presentarlo como
- * transcripción fiel de lo que el docente dijo.
  */
 export function transcribeVoiceNote(input: {
   studentName: string;
@@ -219,9 +251,9 @@ export function transcribeVoiceNote(input: {
   const nombre = input.studentName.split(" ")[0] || "el estudiante";
   return (
     `Mensaje de voz de ${input.durationSeconds} segundos para ${nombre}. ` +
-    "En resumen: se reconoce el esfuerzo en el desarrollo, se pide detallar el " +
-    "procedimiento antes del resultado y se propone repasar los ejercicios similares " +
-    "de la clase anterior."
+    "En resumen: se reconoce el avance en la competencia, se pide explicar el " +
+    "procedimiento antes de dar el resultado y se propone retomar los criterios " +
+    "trabajados en la clase anterior."
   );
 }
 
@@ -230,13 +262,13 @@ export const ACTIVITY_PIPELINE_STEPS = [
   "Archivo recibido",
   "Texto detectado",
   "Preguntas identificadas",
-  "Estructura detectada",
+  "Criterios de evaluación propuestos",
 ];
 
-/** Pasos al procesar y corregir la entrega de un estudiante. */
+/** Pasos al procesar y valorar la entrega de un estudiante. */
 export const SUBMISSION_PIPELINE_STEPS = [
   "Archivo recibido",
   "Texto detectado",
   "Respuestas asociadas a preguntas",
-  "Corrección sugerida por IA",
+  "Nivel de logro sugerido por IA",
 ];
